@@ -4,7 +4,7 @@
 # Necessary packages
 import numpy as np
 from utils import binary_sampler
-from keras.datasets import mnist
+from tensorflow.keras.datasets import mnist
 
 
 def data_loader (data_name, miss_rate):
