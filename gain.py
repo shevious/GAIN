@@ -94,24 +94,20 @@ class GAIN():
     
   @tf.function
   def G_fun(self, X, M, H):
-    self.M = M
-    self.X = X
-    self.H = H
-
     ## GAIN structure
     # Generator
-    self.G_sample = self.generator(X, M)
+    G_sample = self.generator(X, M)
 
     # Combine with observed data
-    self.Hat_X = X * M + self.G_sample * (1-M)
+    Hat_X = X * M + G_sample * (1-M)
 
     # Discriminator
-    self.D_prob = self.discriminator(self.Hat_X, H)
+    D_prob = self.discriminator(Hat_X, H)
 
-    G_loss_temp = -tf.reduce_mean((1-M) * tf.keras.backend.log(self.D_prob + 1e-8))
+    G_loss_temp = -tf.reduce_mean((1-M) * tf.keras.backend.log(D_prob + 1e-8))
     
     self.MSE_loss = \
-    tf.reduce_mean((M * X - M * self.G_sample)**2) / tf.reduce_mean(M)
+    tf.reduce_mean((M * X - M * G_sample)**2) / tf.reduce_mean(M)
 
     self.G_loss = G_loss_temp + self.alpha * self.MSE_loss 
     return self.G_loss
@@ -154,100 +150,9 @@ def gain (data_x, gain_parameters):
   norm_data_x = norm_data_x.astype(np.float32)
   data_x = data_x.astype(np.float32)
   
-  ## GAIN architecture   
-  # Input placeholders
-  # Data vector
-  #X = tf.placeholder(tf.float32, shape = [None, dim])
-  X = keras.Input(shape = [dim])
-  # Mask vector 
-  #M = tf.placeholder(tf.float32, shape = [None, dim])
-  M = keras.Input(shape = [dim])
-  # Hint vector
-  #H = tf.placeholder(tf.float32, shape = [None, dim])
-  H = keras.Input(shape = [dim])
-  
-  # Discriminator variables
-  D_W1 = tf.Variable(xavier_init([dim*2, h_dim])) # Data + Hint as inputs
-  D_b1 = tf.Variable(tf.zeros(shape = [h_dim]))
-  
-  D_W2 = tf.Variable(xavier_init([h_dim, h_dim]))
-  D_b2 = tf.Variable(tf.zeros(shape = [h_dim]))
-  
-  D_W3 = tf.Variable(xavier_init([h_dim, dim]))
-  D_b3 = tf.Variable(tf.zeros(shape = [dim]))  # Multi-variate outputs
-  
-  theta_D = [D_W1, D_W2, D_W3, D_b1, D_b2, D_b3]
-  
-  #Generator variables
-  # Data + Mask as inputs (Random noise is in missing components)
-  G_W1 = tf.Variable(xavier_init([dim*2, h_dim]))  
-  G_b1 = tf.Variable(tf.zeros(shape = [h_dim]))
-  
-  G_W2 = tf.Variable(xavier_init([h_dim, h_dim]))
-  G_b2 = tf.Variable(tf.zeros(shape = [h_dim]))
-  
-  G_W3 = tf.Variable(xavier_init([h_dim, dim]))
-  G_b3 = tf.Variable(tf.zeros(shape = [dim]))
-  
-  theta_G = [G_W1, G_W2, G_W3, G_b1, G_b2, G_b3]
-  
-  ## GAIN functions
-  # Generator
-  def generator(x,m):
-    # Concatenate Mask and Data
-    inputs = tf.concat(values = [x, m], axis = 1) 
-    G_h1 = tf.nn.relu(tf.matmul(inputs, G_W1) + G_b1)
-    G_h2 = tf.nn.relu(tf.matmul(G_h1, G_W2) + G_b2)   
-    # MinMax normalized output
-    G_prob = tf.nn.sigmoid(tf.matmul(G_h2, G_W3) + G_b3) 
-    return G_prob
-      
-  # Discriminator
-  def discriminator(x, h):
-    # Concatenate Data and Hint
-    inputs = tf.concat(values = [x, h], axis = 1) 
-    D_h1 = tf.nn.relu(tf.matmul(inputs, D_W1) + D_b1)  
-    D_h2 = tf.nn.relu(tf.matmul(D_h1, D_W2) + D_b2)
-    D_logit = tf.matmul(D_h2, D_W3) + D_b3
-    D_prob = tf.nn.sigmoid(D_logit)
-    return D_prob
-  
-  ## GAIN structure
-  # Generator
-  G_sample = generator(X, M)
- 
-  # Combine with observed data
-  Hat_X = X * M + G_sample * (1-M)
-  
-  # Discriminator
-  D_prob = discriminator(Hat_X, H)
-  
-  ## GAIN loss
-  D_loss_temp = -tf.reduce_mean(M * tf.keras.backend.log(D_prob + 1e-8) \
-                                + (1-M) * tf.keras.backend.log(1. - D_prob + 1e-8)) 
-  
-  G_loss_temp = -tf.reduce_mean((1-M) * tf.keras.backend.log(D_prob + 1e-8))
-  
-  MSE_loss = \
-  tf.reduce_mean((M * X - M * G_sample)**2) / tf.reduce_mean(M)
-  
-  D_loss = D_loss_temp
-  G_loss = G_loss_temp + alpha * MSE_loss 
-  
-  ## GAIN solver
-  #D_solver = tf.train.AdamOptimizer().minimize(D_loss, var_list=theta_D)
-  #G_solver = tf.train.AdamOptimizer().minimize(G_loss, var_list=theta_G)
-  #adam_D_solver = tf.keras.optimizers.Adam()
-  #D_solver = adam_D_solver.minimize(D_loss, var_list=theta_D)
-  #G_solver = tf.keras.optimizers.Adam().minimize(G_loss, var_list=theta_G)
-  
-  ## Iterations
-  #sess = tf.Session()
-  #sess.run(tf.global_variables_initializer())
   opt_D = tf.keras.optimizers.Adam()
   opt_G = tf.keras.optimizers.Adam()
-  #D_fun = lambda M, X, H: D_loss
-  #D_fun = tf.keras.backend.function(inputs=[M,X,H], outputs=D_loss)
+
   gain = GAIN(dim, alpha)
    
   # Start Iterations
@@ -276,10 +181,17 @@ def gain (data_x, gain_parameters):
     #print('Z_mb.ndtype = ', Z_mb.dtype)
     #print('norm_data_x.ndtype = ', norm_data_x.dtype)
 
+    import time
+    tick = time.time()
     loss = opt_D.minimize(lambda: gain.D_fun(M_mb, X_mb, H_mb), var_list = gain.theta_D)
     D_loss_curr = gain.D_loss
+    tock = time.time()
+    print('D = ', (tock-tick)*1000)
 
+    tick = time.time()
     loss = opt_G.minimize(lambda: gain.G_fun(X_mb, M_mb, H_mb), var_list = gain.theta_G)
+    tock = time.time()
+    print('G = ', (tock-tick)*1000)
     
     G_loss_curr = gain.G_loss
     MSE_loss_curr = gain.MSE_loss
