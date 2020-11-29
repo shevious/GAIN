@@ -25,6 +25,8 @@ import tensorflow.keras.backend as K
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.models import Model
 
+import os
+
 class GDense(tf.keras.layers.Layer):
   def __init__(self, w, b):
     super(GDense, self).__init__()
@@ -35,7 +37,7 @@ class GDense(tf.keras.layers.Layer):
     return tf.matmul(x, self.w) + self.b
 
 class GAIN():
-  def __init__(self, dim, alpha):
+  def __init__(self, dim, alpha, load=False):
     self.dim = dim
     self.alpha = alpha
     self.h_dim = int(dim)
@@ -44,6 +46,11 @@ class GAIN():
     #self.generator.summary()
     self.build_discriminator()
     #self.discriminator.summary()
+
+    self.generator_optimizer = Adam()
+    self.discriminator_optimizer = Adam()
+    if load == True:
+      self.load()
 
   ## GAIN models
   def build_generator(self):
@@ -80,15 +87,10 @@ class GAIN():
       l.trainable = val
 
   def G_loss_bincross(M, D_prob):
-    G_loss_temp = -tf.reduce_mean((1-M) * tf.keras.backend.log(D_prob + 1e-8))
-    #MSE_loss = tf.reduce_mean((M * X - M * G_sample)**2) / tf.reduce_mean(M)
-    #G_loss = G_loss_temp + self.alpha * MSE_loss 
-    #return G_loss
-    return G_loss_temp
+    return -tf.reduce_mean((1-M) * tf.keras.backend.log(D_prob + 1e-8))
 
   def MSE_loss(M, X, G_sample):
-    MSE_loss = tf.reduce_mean((M * X - M * G_sample)**2) / tf.reduce_mean(M)
-    return MSE_loss
+    return tf.reduce_mean((M * X - M * G_sample)**2) / tf.reduce_mean(M)
 
   def G_loss(self, M, D_prob, X, G_sample):
     G_loss_temp = -tf.reduce_mean((1-M) * tf.keras.backend.log(D_prob + 1e-8))
@@ -106,14 +108,28 @@ class GAIN():
       result[l[0]] = l[1]
     return result
 
-  def D_loss(y_true, y_pred):
-      M = y_true
-      D_prob = y_pred
+  def D_loss(M, D_prob):
       ## GAIN loss
-      d_loss = -tf.reduce_mean(M * tf.keras.backend.log(D_prob + 1e-8) \
+      return -tf.reduce_mean(M * tf.keras.backend.log(D_prob + 1e-8) \
                     + (1-M) * tf.keras.backend.log(1. - D_prob + 1e-8)) 
-      return d_loss
-      #return { 'loss': self.D_loss, 'myloss': 0 }
+
+  def save(self, save_dir='savedata'):
+    if not os.path.exists(save_dir):
+      os.makedirs(save_dir)
+    disc_savefile = os.path.join(save_dir, 'discriminator.h5')
+    gen_savefile = os.path.join(save_dir, 'generator.h5')
+    self.discriminator.save_weights(disc_savefile)
+    self.generator.save_weights(gen_savefile)
+
+  def load(self, save_dir='savedata'):
+    disc_savefile = os.path.join(save_dir, 'discriminator.h5')
+    gen_savefile = os.path.join(save_dir, 'generator.h5')
+    try:
+      self.discriminator.load_weights(disc_savefile)
+      self.generator.load_weights(gen_savefile)
+      print('model weights loaded')
+    except:
+      print('model loadinng error')
 
   # `tf.function`이 어떻게 사용되는지 주목해 주세요.
   # 이 데코레이터는 함수를 "컴파일"합니다.
@@ -128,12 +144,14 @@ class GAIN():
         D_prob = self.discriminator([Hat_X, H], training=True)
         gen_loss = self.G_loss(M, D_prob, X, G_sample)
         disc_loss = GAIN.D_loss(M, D_prob)
+        #disc_loss = tf.keras.backend.mean(tf.keras.losses.binary_crossentropy(M, D_prob))
 
       gradients_of_generator = gen_tape.gradient(gen_loss, self.generator.trainable_variables)
       gradients_of_discriminator = disc_tape.gradient(disc_loss, self.discriminator.trainable_variables)
 
       self.generator_optimizer.apply_gradients(zip(gradients_of_generator, self.generator.trainable_variables))
       self.discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, self.discriminator.trainable_variables))
+      #return gen_loss, disc_loss
 
 
 class DataGenerator(keras.utils.Sequence):
@@ -237,9 +255,9 @@ def gain (data_x, gain_parameters):
   data_x = data_x.astype(np.float32)
 
   train_generator = DataGenerator(data_x, batch_size, hint_rate)
-  it = iter(train_generator)
 
   ''' check
+  it = iter(train_generator)
   #(x_mb, m_mb, h_mb) = train_generator.__getitem__(0)
   (x_mb, m_mb, h_mb) = next(it)
   print(x_mb.shape, x_mb.dtype)
@@ -252,7 +270,8 @@ def gain (data_x, gain_parameters):
   sys.exit(0)
   '''
   ds = tf.data.Dataset.from_generator(
-      lambda: train_generator.__iter__(),
+      #lambda: train_generator.__iter__(),
+      lambda: train_generator,
       output_types=(tf.float32, tf.float32, tf.float32),
       output_shapes=(
         [batch_size, train_generator.dim],
@@ -279,16 +298,16 @@ def gain (data_x, gain_parameters):
   X_mb, M_mb, H_mb = next(it)
   
   ## Iterations
-  gain = GAIN(dim, alpha)
-  gain.generator_optimizer = Adam()
-  gain.discriminator_optimizer = Adam()
+  gain = GAIN(dim, alpha, load=True)
 
   it_ds = iter(ds)
 
   #warm up
+  '''
   for i in range(10):
     X_mb, M_mb, H_mb = next(it_ds)
     gain.train_step([X_mb, M_mb, H_mb])
+  '''
    
   #tf.profiler.experimental.start('logdir')
   # Start Iterations
@@ -296,6 +315,8 @@ def gain (data_x, gain_parameters):
   for it in progress:
     X_mb, M_mb, H_mb = next(it_ds)
     gain.train_step([X_mb, M_mb, H_mb])
+
+  gain.save()
       
   #tf.profiler.experimental.stop()
             
