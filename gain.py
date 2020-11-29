@@ -25,8 +25,6 @@ import tensorflow.keras.backend as K
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.models import Model
 
-#tf.config.optimizer.set_jit(True)
-
 class GDense(tf.keras.layers.Layer):
   def __init__(self, w, b):
     super(GDense, self).__init__()
@@ -42,37 +40,10 @@ class GAIN():
     self.alpha = alpha
     self.h_dim = int(dim)
 
-    # Discriminator variables
-    self.D_W1 = tf.Variable(xavier_init([self.dim*2, self.h_dim]), trainable=True) # Data + Hint as inputs
-    self.D_b1 = tf.Variable(tf.zeros(shape = [self.h_dim]), trainable=True)
-    
-    self.D_W2 = tf.Variable(xavier_init([self.h_dim, self.h_dim]))
-    self.D_b2 = tf.Variable(tf.zeros(shape = [self.h_dim]))
-    
-    self.D_W3 = tf.Variable(xavier_init([self.h_dim, self.dim]))
-    self.D_b3 = tf.Variable(tf.zeros(shape = [self.dim]))  # Multi-variate outputs
-    
-    self.theta_D = [self.D_W1, self.D_W2, self.D_W3, self.D_b1, self.D_b2, self.D_b3]
-
-    #Generator variables
-    # Data + Mask as inputs (Random noise is in missing components)
-    self.G_W1 = tf.Variable(xavier_init([self.dim*2, self.h_dim]), trainable=True)  
-    self.G_b1 = tf.Variable(tf.zeros(shape = [self.h_dim]), trainable=True)
-    
-    self.G_W2 = tf.Variable(xavier_init([self.h_dim, self.h_dim]), trainable=True)
-    self.G_b2 = tf.Variable(tf.zeros(shape = [self.h_dim]), trainable=True)
-    
-    self.G_W3 = tf.Variable(xavier_init([self.h_dim, self.dim]))
-    self.G_b3 = tf.Variable(tf.zeros(shape = [self.dim]))
-    
-    self.theta_G = [self.G_W1, self.G_W2, self.G_W3, self.G_b1, self.G_b2, self.G_b3]
-
     self.build_generator()
     #self.generator.summary()
     self.build_discriminator()
     #self.discriminator.summary()
-    #self.build_adversarial()
-    #self.model.summary()
 
   ## GAIN models
   def build_generator(self):
@@ -127,64 +98,6 @@ class GAIN():
     G_loss = G_loss_temp + self.alpha * MSE_loss 
     return G_loss
 
-  def build_adversarial(self):
-
-    ### COMPILE DISCRIMINATOR
-
-    self.discriminator.compile(
-      optimizer=Adam(),
-      #loss = 'binary_crossentropy',
-      loss = self.D_loss(),
-      #metrics = ['accuracy']
-      metrics = ['binary_accuracy']
-    )
-
-    ### COMPILE THE FULL GAN
-
-    self.set_trainable(self.discriminator, False)
-
-    X = Input(shape=(self.dim,), name='model_input_x')
-    M = Input(shape=(self.dim,), name='model_input_m')
-    H = Input(shape=(self.dim,), name='model_input_h')
-
-    model_input = [X, M, H]
-    G_sample = self.generator([X, M])
-    self.X = X
-
-    # Combine with observed data
-    Hat_X = X * M + G_sample * (1-M)
-    D_prob = self.discriminator([Hat_X, H])
-    model_output = D_prob
-    self.model = Model(model_input, model_output)
-
-    self.model.add_loss(self.G_loss(M, D_prob, X, G_sample))
-    #self.model.add_metric(GAIN.G_loss_bincross(M, D_prob), name='binary_crossentropy')
-    #self.model.add_metric(GAIN.MSE_loss(M, X, G_sample), name='MSE_loss')
-
-    self.model.compile( 
-      optimizer=Adam(),
-      #loss='binary_crossentropy',
-      #loss=self.G_loss(),
-      loss=None,
-      metrics=['binary_accuracy']
-    )
-    self.model.summary()
-    #print('### build')
-    #print(len(self.model.inputs))
-    #print(self.model.inputs[0].shape)
-    #print(len(self.model.outputs))
-    #print(self.model.outputs[0].shape)
-    self.set_trainable(self.discriminator, True)
-
-    '''
-    self.tensorboard = tf.keras.callbacks.TensorBoard(
-        log_dir='logs', histogram_freq=0, write_graph=True, write_images=False,
-        update_freq='epoch', profile_batch=2, embeddings_freq=0,
-        embeddings_metadata=None,
-    )
-    self.tensorboard.set_model(self.discriminator)
-    '''
-
   # Transform train_on_batch return value
   # to dict expected by on_batch_end callback
   def named_logs(model, logs):
@@ -222,37 +135,6 @@ class GAIN():
       self.generator_optimizer.apply_gradients(zip(gradients_of_generator, self.generator.trainable_variables))
       self.discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, self.discriminator.trainable_variables))
 
-  def train_discriminator(self, M, X, H):
-
-    ## GAIN structure
-
-    # Generator
-    #import time
-    #tick = time.time()
-    G_sample = self.generator.predict([X, M])
-    #tock = time.time()
-    #print('disc gen time = ', (tock-tick)*1000)
-
-    # Combine with observed data
-    Hat_X = X * M + G_sample * (1-M)
-
-    # Discriminator
-    #tick = time.time()
-    return self.discriminator.train_on_batch([Hat_X, H], M)
-    #tock = time.time()
-    #print('disc train time = ', (tock-tick)*1000)
-
-  def train_generator(self, X, M, H):
-
-    ## GAIN structure
-
-    # Generator
-    #import time
-    #tick = time.time()
-    #self.model.train_on_batch([X, M, H], [M, X])
-    #tock = time.time()
-    #print('gen train time = ', (tock-tick)*1000)
-    return self.model.train_on_batch([X, M, H], M)
 
 class DataGenerator(keras.utils.Sequence):
     'Generates data for Keras'
@@ -378,6 +260,7 @@ def gain (data_x, gain_parameters):
         [batch_size, train_generator.dim],
       )
   ).repeat(-1).prefetch(10)
+
   ''' check ds
   print(ds.element_spec)
   it_ds = iter(ds)
@@ -391,10 +274,6 @@ def gain (data_x, gain_parameters):
     print(h_mb.numpy())
   it = iter(ds)
   x_mb, m_mb, h_mb = next(it)
-
-  x_mb, m_mb, h_mb = next(it)
-
-  x_mb, m_mb, h_mb = next(it)
   '''
   it = iter(ds)
   X_mb, M_mb, H_mb = next(it)
@@ -406,21 +285,6 @@ def gain (data_x, gain_parameters):
 
   it_ds = iter(ds)
 
-  #import sys
-  #sys.exit(1)
-
-  #warm up
-  #gain.model.fit(ds, epochs=3, batch_size=128)
-
-  #import sys
-  #sys.exit(0)
-
-  import time
-  #tick = time.time()
-  #gain.model.fit(ds, epochs=100, batch_size=128)
-  #tock = time.time()
-  #print('model fit=', (tock-tick)*1000)
-
   #warm up
   for i in range(10):
     X_mb, M_mb, H_mb = next(it_ds)
@@ -430,69 +294,11 @@ def gain (data_x, gain_parameters):
   # Start Iterations
   progress = tqdm(range(iterations))
   for it in progress:
-  #for it in range(iterations):    
     X_mb, M_mb, H_mb = next(it_ds)
     gain.train_step([X_mb, M_mb, H_mb])
       
-    '''
-    # Sample batch
-    batch_idx = sample_batch_index(no, batch_size)
-    X_mb = norm_data_x[batch_idx, :]  
-    M_mb = data_m[batch_idx, :]  
-    # Sample random vectors  
-    Z_mb = uniform_sampler(0, 0.01, batch_size, dim)
-    # Sample hint vectors
-    H_mb_temp = binary_sampler(hint_rate, batch_size, dim)
-    H_mb = M_mb * H_mb_temp
-      
-    # Combine random vectors with observed vectors
-    X_mb = M_mb * X_mb + (1-M_mb) * Z_mb 
-
-    X_mb = X_mb.astype(np.float32)
-    M_mb = M_mb.astype(np.float32)
-    H_mb = H_mb.astype(np.float32)
-    #print('###')
-    #print('X_mb.ndtype = ', X_mb.dtype)
-    #print('H_mb.ndtype = ', H_mb.dtype)
-    #print('M_mb.ndtype = ', M_mb.dtype)
-    #print('Z_mb.ndtype = ', Z_mb.dtype)
-    #print('norm_data_x.ndtype = ', norm_data_x.dtype)
-
-    #loss = opt_D.minimize(lambda: gain.D_fun(M_mb, X_mb, H_mb), var_list = gain.theta_D)
-    '''
-    #X_mb, M_mb, H_mb = next(it_ds)
-
-    #import time
-    #d_logs = gain.train_discriminator(M_mb, X_mb, H_mb)
-    #print(gain.discriminator.metrics_names)
-    #print(logs)
-    #gain.tensorboard.on_epoch_end(it, GAIN.named_logs(gain.discriminator, logs))
-    #print('disc time = ', (tock-tick)*1000)
-    #D_loss_curr = gain.D_loss
-
-    #loss = opt_G.minimize(lambda: gain.G_fun(X_mb, M_mb, H_mb), var_list = gain.theta_G)
-    #tick = time.time()
-    #g_logs = gain.train_generator(X_mb, M_mb, H_mb)
-
-    #g_logs = gain.model.fit([X_mb, M_mb, H_mb])
-
-    #progress.set_description('d_loss: %f, g_loss: %f' % (d_logs[0], g_logs[0]))
-    #print(gain.model.metrics_names)
-    #print(logs)
-    #tock = time.time()
-    #print('gen time = ', (tock-tick)*1000)
-    
-    #G_loss_curr = gain.G_loss
-    #MSE_loss_curr = gain.MSE_loss
-
-    #_, D_loss_curr = sess.run([D_solver, D_loss_temp], 
-                              #feed_dict = {M: M_mb, X: X_mb, H: H_mb})
-    #_, G_loss_curr, MSE_loss_curr = \
-    #sess.run([G_solver, G_loss_temp, MSE_loss],
-             #feed_dict = {X: X_mb, M: M_mb, H: H_mb})
   #tf.profiler.experimental.stop()
             
-  #gain.tensorboard.on_train_end(None)
   ## Return imputed data      
   Z_mb = uniform_sampler(0, 0.01, no, dim) 
   M_mb = data_m
